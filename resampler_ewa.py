@@ -3,6 +3,16 @@ import cv2
 from numba import njit
 
 @njit
+def catmull_rom(x, a):
+    x = abs(x)
+    if x <= 1.0:
+        return (1.5*x**3 - 2.5*x**2 + 1)
+    elif 1.0 < abs(x) <= 2.0:
+        return (-0.5*x**3 + 2.5*x**2 - 4*x + 2)
+    else:
+        return 0.0
+
+@njit
 def j1(x):
     # For small values of x, use Taylor series expansion
     if abs(x) < 1e-8:
@@ -37,7 +47,8 @@ def elliptical_resampler(input, factor):
     output_shape = (int(round(input_shape[0] * factor)), int(round(input_shape[1] * factor)), input_shape[2])
     output = np.empty(output_shape, dtype=np.float32)
 
-    filter_size = 3
+    filter_size = 2 # return this back to 3 for jinc
+    anti_ringing = True
     
     for y in range(output_shape[0]):
         for x in range(output_shape[1]):
@@ -52,15 +63,24 @@ def elliptical_resampler(input, factor):
 
                 norm = 0.0
                 val = 0.0
+                inputs_for_clamping = []
 
                 for idy in range(idy_start, idy_end):
                     for idx in range(idx_start, idx_end):
-                        weight = ewa_lanczos(dist(equiv_x - idx, equiv_y - idy), filter_size)
+                        # weight = ewa_lanczos(dist(equiv_x - idx, equiv_y - idy), filter_size)
+                        weight = catmull_rom(dist(equiv_x - idx, equiv_y - idy), filter_size)
                         norm += weight
                         val += input[idy, idx, z] * weight
+                        if anti_ringing:
+                            inputs_for_clamping.append(input[idy, idx, z])
+
                 if norm == 0:
                     norm = 0.001
-                output[y, x, z] = val / norm
+                
+                if anti_ringing:
+                    output[y, x, z] = np.minimum(np.amax(np.array(inputs_for_clamping)), np.maximum(val / norm, np.amin(np.array(inputs_for_clamping))))
+                else:
+                    output[y, x, z] = val / norm
 
     return output
 
