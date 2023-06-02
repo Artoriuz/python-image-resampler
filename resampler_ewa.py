@@ -13,6 +13,18 @@ def catmull_rom(x, a):
         return 0.0
 
 @njit
+def mitchell(x, a):
+    x = abs(x)
+    c = 0.5
+    b = 0
+    if x <= 1:
+        return (1/6)*((12 - 9*b - 6*c)*(x**3) + (-18 + 12*b + 6*c)*(x**2) + (6 - 2*b))
+    elif 1 < x <= 2:
+        return (1/6)*((-b - 6*c)*(x**3) + (6*b + 30*c)*(x**2) + (-12*b - 48*c)*x + (8*b + 24*c))
+    else:
+        return 0.0
+
+@njit
 def j1(x):
     # For small values of x, use Taylor series expansion
     if abs(x) < 1e-8:
@@ -35,7 +47,17 @@ def jinc(x):
 
 @njit
 def ewa_lanczos(x, a):
-    return jinc(x) * jinc(x / a)
+    if abs(x) < a:
+        return jinc(x) * jinc(x / a)
+    else:
+        return 0
+
+@njit
+def lanczos(x, a):
+    if abs(x) < a:
+        return np.sinc(x) * np.sinc(x / a)
+    else:
+        return 0
 
 @njit
 def dist(x, y):
@@ -47,8 +69,8 @@ def elliptical_resampler(input, factor):
     output_shape = (int(round(input_shape[0] * factor)), int(round(input_shape[1] * factor)), input_shape[2])
     output = np.empty(output_shape, dtype=np.float32)
 
-    filter_size = 2 # return this back to 3 for jinc
-    anti_ringing = True
+    filter_size = 3.2383154841662362
+    anti_ringing = False
     
     for y in range(output_shape[0]):
         for x in range(output_shape[1]):
@@ -56,26 +78,28 @@ def elliptical_resampler(input, factor):
                 equiv_y = y / factor
                 equiv_x = x / factor
 
-                idy_start = np.maximum(np.floor(equiv_y) - filter_size, 0.0)
-                idy_end = np.minimum(np.floor(equiv_y) + filter_size + 1, input_shape[0])
-                idx_start = np.maximum(np.floor(equiv_x) - filter_size, 0.0)
-                idx_end = np.minimum(np.floor(equiv_x) + filter_size + 1, input_shape[1])
+                idy_start = np.maximum(np.floor(equiv_y) - np.ceil(filter_size), 0.0)
+                idy_end = np.minimum(np.floor(equiv_y) + np.ceil(filter_size) + 1, input_shape[0])
+                idx_start = np.maximum(np.floor(equiv_x) - np.ceil(filter_size), 0.0)
+                idx_end = np.minimum(np.floor(equiv_x) + np.ceil(filter_size) + 1, input_shape[1])
 
                 norm = 0.0
                 val = 0.0
-                inputs_for_clamping = []
+                
+                if anti_ringing:
+                    inputs_for_clamping = []
 
                 for idy in range(idy_start, idy_end):
                     for idx in range(idx_start, idx_end):
-                        # weight = ewa_lanczos(dist(equiv_x - idx, equiv_y - idy), filter_size)
-                        weight = catmull_rom(dist(equiv_x - idx, equiv_y - idy), filter_size)
+                        weight = ewa_lanczos(dist(equiv_x - idx, equiv_y - idy), filter_size)
+                        # weight = catmull_rom(dist(equiv_x - idx, equiv_y - idy), filter_size)
                         norm += weight
                         val += input[idy, idx, z] * weight
                         if anti_ringing:
                             inputs_for_clamping.append(input[idy, idx, z])
 
                 if norm == 0:
-                    norm = 0.001
+                    norm = 0.01
                 
                 if anti_ringing:
                     output[y, x, z] = np.minimum(np.amax(np.array(inputs_for_clamping)), np.maximum(val / norm, np.amin(np.array(inputs_for_clamping))))
