@@ -25,28 +25,8 @@ def mitchell(x, a):
         return 0.0
 
 @njit
-def j1(x):
-    # For large values of x, use asymptotic expansion
-    if abs(x) > 3.0:
-        return (np.sin(x) / x - np.cos(x)) / np.sqrt(x)
-
-    # For intermediate values of x, use rational approximation
-    x2 = x**2
-    return x * (0.5 + x2 * (-0.0187293 + x2 * (0.000595238 + x2 * (-8.33333e-6 + x2 * 8.2672e-8))))
-
-@njit
-def jinc(x):
-    if abs(x) < 1e-8:
-        return 1.0
-    x *= np.pi
-    return 2.0 * j1(x) / x
-
-@njit
-def ewa_lanczos(x, a):
-    if abs(x) < a:
-        return jinc(x) * jinc(x / a)
-    else:
-        return 0
+def catrom_2d(x, y):
+    return catmull_rom(x) * catmull_rom(y)
 
 @njit
 def lanczos(x, a):
@@ -56,22 +36,32 @@ def lanczos(x, a):
         return 0
 
 @njit
+def lanczos_2d(x, y, a):
+    return lanczos(x, a) * lanczos(y, a)
+
+@njit
 def amd_lanczos(x):
-    if abs(x) < 2:
+    x = abs(x)
+    if x < 2:
         return (25/16 * (2/5 * x**2 - 1)**2 - (25/16 - 1)) * (1/4 * x**2 - 1)**2
     else:
         return 0
 
 @njit
-def lanczos_2d(x, y, a):
-    if abs(x) < a:
-        return (np.sinc(x) * np.sinc(x / a)) * (np.sinc(y) * np.sinc(y / a))
+def ewa_lanczos2_polynomial(x):
+    x = abs(x)
+    if x < 2.2331305943815286:
+        return -0.35398 * x**4 + 1.73871 * x**3 + -2.39193 * x**2 + 0.15839 * x + 0.99584
     else:
         return 0
 
 @njit
-def catrom_2d(x, y):
-    return catmull_rom(x) * catmull_rom(y)
+def ewa_lanczos3_polynomial(x):
+    x = abs(x)
+    if x < 3.2383154841662362:
+        return 0.08614 * x**5 + -0.79902 * x**4 + 2.58326 * x**3 + -3.14569 * x**2 + 0.45981 * x + 0.97632
+    else:
+        return 0
 
 @njit
 def dist(x, y):
@@ -83,8 +73,7 @@ def elliptical_resampler(input, factor):
     output_shape = (int(round(input_shape[0] * factor)), int(round(input_shape[1] * factor)), input_shape[2])
     output = np.empty(output_shape, dtype=np.float32)
 
-    #filter_size = 3.2383154841662362
-    filter_size = 2
+    filter_size = 3
     anti_ringing = True
 
     for y in range(output_shape[0]):
@@ -106,11 +95,11 @@ def elliptical_resampler(input, factor):
 
                 for idy in range(idy_start, idy_end):
                     for idx in range(idx_start, idx_end):
-                        # weight = ewa_lanczos(dist(equiv_x - idx, equiv_y - idy), filter_size)
                         # weight = catmull_rom(dist(equiv_x - idx, equiv_y - idy))
                         # weight = amd_lanczos(dist(idx - equiv_x, idy - equiv_y))
-                        weight = lanczos_2d(idx - equiv_x, idy - equiv_y, filter_size)
+                        # weight = lanczos_2d(idx - equiv_x, idy - equiv_y, filter_size)
                         # weight = catrom_2d(idx - equiv_x, idy - equiv_y)
+                        weight = ewa_lanczos2_polynomial(dist(equiv_x - idx, equiv_y - idy))
                         norm += weight
                         val += input[idy, idx, z] * weight
                         if anti_ringing:
