@@ -3,7 +3,7 @@ import cv2
 from numba import njit
 
 @njit
-def catmull_rom(x, a):
+def catmull_rom(x):
     x = abs(x)
     if x <= 1.0:
         return (1.5*x**3 - 2.5*x**2 + 1)
@@ -26,10 +26,6 @@ def mitchell(x, a):
 
 @njit
 def j1(x):
-    # For small values of x, use Taylor series expansion
-    if abs(x) < 1e-8:
-        return x / 3.0 - (x**3) / 30.0 + (x**5) / 840.0 - (x**7) / 45360.0 + (x**9) / 3991680.0
-
     # For large values of x, use asymptotic expansion
     if abs(x) > 3.0:
         return (np.sin(x) / x - np.cos(x)) / np.sqrt(x)
@@ -60,6 +56,24 @@ def lanczos(x, a):
         return 0
 
 @njit
+def amd_lanczos(x):
+    if abs(x) < 2:
+        return (25/16 * (2/5 * x**2 - 1)**2 - (25/16 - 1)) * (1/4 * x**2 - 1)**2
+    else:
+        return 0
+
+@njit
+def lanczos_2d(x, y, a):
+    if abs(x) < a:
+        return (np.sinc(x) * np.sinc(x / a)) * (np.sinc(y) * np.sinc(y / a))
+    else:
+        return 0
+
+@njit
+def catrom_2d(x, y):
+    return catmull_rom(x) * catmull_rom(y)
+
+@njit
 def dist(x, y):
     return np.sqrt(np.square(x) + np.square(y))
 
@@ -69,30 +83,34 @@ def elliptical_resampler(input, factor):
     output_shape = (int(round(input_shape[0] * factor)), int(round(input_shape[1] * factor)), input_shape[2])
     output = np.empty(output_shape, dtype=np.float32)
 
-    filter_size = 3.2383154841662362
-    anti_ringing = False
-    
+    #filter_size = 3.2383154841662362
+    filter_size = 2
+    anti_ringing = True
+
     for y in range(output_shape[0]):
         for x in range(output_shape[1]):
             for z in range(output_shape[2]):
-                equiv_y = y / factor
-                equiv_x = x / factor
+                equiv_y = float(y) / factor
+                equiv_x = float(x) / factor
 
-                idy_start = np.maximum(np.floor(equiv_y) - np.ceil(filter_size), 0.0)
+                idy_start = np.maximum(np.floor(equiv_y) - np.ceil(filter_size) + 1, 0.0)
                 idy_end = np.minimum(np.floor(equiv_y) + np.ceil(filter_size) + 1, input_shape[0])
-                idx_start = np.maximum(np.floor(equiv_x) - np.ceil(filter_size), 0.0)
+                idx_start = np.maximum(np.floor(equiv_x) - np.ceil(filter_size) + 1, 0.0)
                 idx_end = np.minimum(np.floor(equiv_x) + np.ceil(filter_size) + 1, input_shape[1])
 
                 norm = 0.0
                 val = 0.0
-                
+
                 if anti_ringing:
                     inputs_for_clamping = []
 
                 for idy in range(idy_start, idy_end):
                     for idx in range(idx_start, idx_end):
-                        weight = ewa_lanczos(dist(equiv_x - idx, equiv_y - idy), filter_size)
-                        # weight = catmull_rom(dist(equiv_x - idx, equiv_y - idy), filter_size)
+                        # weight = ewa_lanczos(dist(equiv_x - idx, equiv_y - idy), filter_size)
+                        # weight = catmull_rom(dist(equiv_x - idx, equiv_y - idy))
+                        # weight = amd_lanczos(dist(idx - equiv_x, idy - equiv_y))
+                        weight = lanczos_2d(idx - equiv_x, idy - equiv_y, filter_size)
+                        # weight = catrom_2d(idx - equiv_x, idy - equiv_y)
                         norm += weight
                         val += input[idy, idx, z] * weight
                         if anti_ringing:
@@ -100,7 +118,7 @@ def elliptical_resampler(input, factor):
 
                 if norm == 0:
                     norm = 0.01
-                
+
                 if anti_ringing:
                     output[y, x, z] = np.minimum(np.amax(np.array(inputs_for_clamping)), np.maximum(val / norm, np.amin(np.array(inputs_for_clamping))))
                 else:
@@ -108,7 +126,7 @@ def elliptical_resampler(input, factor):
 
     return output
 
-array = (cv2.imread("input.png") / 255.0).astype(np.float32)
+array = (cv2.imread("input.png") / 255.0).astype(np.float64)
 test = elliptical_resampler(array, 2.0)
 
 test = np.clip(test * 255.0, 0, 255).astype(np.uint8)
