@@ -7,28 +7,21 @@ def lanczos(x, a):
     return np.sinc(x) * np.sinc(x / a)
 
 @njit
-def amd_lanczos(x, a):
-    if abs(x) <= 2:
-        return (25/16 * (2/5 * x**2 - 1)**2 - (25/16 - 1)) * (1/4 * x**2 - 1)**2
-    else:
-        return 0
-
-@njit
 def signal_resampler(input, factor):
     input_shape = input.shape
     output_shape = int(round(input_shape[0] * factor))
 
     output = np.zeros(output_shape)
-    filter_size = 3
+    filter_radius = 3
 
     for x in range(output_shape):
-        equiv_x = x / factor
-        idx_start = np.maximum(np.floor(equiv_x) - filter_size + 1, 0.0)
-        idx_end = np.minimum(np.floor(equiv_x) + filter_size + 1, input_shape[0])
+        equiv_x = (float(x) - 0.5) / factor
+        idx_start = np.maximum(np.floor(equiv_x) - filter_radius, 0.0)
+        idx_end = np.minimum(np.floor(equiv_x) + filter_radius + 1, input_shape[0])
         norm = 0.0
         val = 0.0
         for idx in range(idx_start, idx_end):
-            weight = lanczos(idx - equiv_x, filter_size) 
+            weight = lanczos(idx - equiv_x, filter_radius) 
             norm += weight
             val += input[idx] * weight
         output[x] = val / norm
